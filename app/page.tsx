@@ -2,56 +2,53 @@
 
 import { useState, useEffect, useRef } from "react";
 
+interface Message {
+  id: string;
+  sender: "user" | "sarvam";
+  text: string;
+}
+
 export default function Home() {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "1",
+      sender: "sarvam",
+      text: "Hello! Tap the microphone button to talk, or type a message below.",
+    },
+  ]);
+  const [input, setInput] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [transcript, setTranscript] = useState("");
-  const [response, setResponse] = useState("");
-  const [textInput, setTextInput] = useState("");
-  const [hasVoiceSupport, setHasVoiceSupport] = useState(true);
-  const [language, setLanguage] = useState("hi-IN"); // Default Indic voice
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const recognitionRef = useRef<any>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Check SpeechRecognition support
-    if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        setHasVoiceSupport(false);
-      }
-    }
-  }, []);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isThinking]);
 
-  const speakText = (text: string) => {
-    if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  const speak = (text: string) => {
+    if (!soundEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
-
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = language;
+    utterance.lang = "en-IN";
     utterance.rate = 1.0;
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
     window.speechSynthesis.speak(utterance);
   };
 
-  const handleSendQuery = async (queryText: string) => {
-    const text = queryText.trim();
+  const sendMessage = async (userText: string) => {
+    const text = userText.trim();
     if (!text || isThinking) return;
 
-    setTranscript(text);
-    setTextInput("");
+    const userMsg: Message = { id: Date.now().toString(), sender: "user", text };
+    setMessages((prev) => [...prev, userMsg]);
+    setInput("");
     setIsThinking(true);
+
     if (typeof window !== "undefined") {
-      window.speechSynthesis.cancel();
+      window.speechSynthesis?.cancel();
     }
-    setIsSpeaking(false);
 
     try {
       const res = await fetch("/api/sarvam/chat", {
@@ -62,30 +59,34 @@ export default function Home() {
             {
               role: "system",
               content:
-                "You are a friendly, concise multilingual voice assistant powered by Sarvam AI. Keep answers short, conversational, and direct (1-3 sentences) suitable for spoken voice audio in Indian contexts (English, Hindi, or Hinglish).",
+                "You are a friendly, concise voice assistant. Give helpful, conversational responses in 1-3 sentences.",
             },
+            ...messages.map((m) => ({
+              role: m.sender === "user" ? "user" : "assistant",
+              content: m.text,
+            })),
             { role: "user", content: text },
           ],
           model: "sarvam-105b-conversations",
         }),
       });
 
-      if (!res.ok) throw new Error("Failed to reach Sarvam AI");
+      if (!res.ok) throw new Error("Failed to get response");
       const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || "Namaste! How can I assist you?";
+      const replyText = data.choices?.[0]?.message?.content || "I didn't quite catch that. Could you repeat?";
 
-      setResponse(reply);
-      speakText(reply);
+      setMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), sender: "sarvam", text: replyText }]);
+      speak(replyText);
     } catch {
-      const errMsg = "Sorry, I could not connect to Sarvam AI. Please check your network and API key.";
-      setResponse(errMsg);
-      speakText(errMsg);
+      const errorReply = "Sorry, I am having trouble connecting right now. Please try again.";
+      setMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), sender: "sarvam", text: errorReply }]);
+      speak(errorReply);
     } finally {
       setIsThinking(false);
     }
   };
 
-  const toggleListening = () => {
+  const toggleMic = () => {
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
@@ -102,32 +103,21 @@ export default function Home() {
     }
 
     try {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
-
+      window.speechSynthesis?.cancel();
       const recognition = new SpeechRecognition();
-      recognition.lang = language;
-      recognition.continuous = false;
+      recognition.lang = "en-IN";
       recognition.interimResults = false;
+      recognition.continuous = false;
 
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
+      recognition.onstart = () => setIsListening(true);
       recognition.onresult = (event: any) => {
         const spoken = event.results[0][0].transcript;
         if (spoken) {
-          handleSendQuery(spoken);
+          sendMessage(spoken);
         }
       };
-
-      recognition.onerror = () => {
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
+      recognition.onerror = () => setIsListening(false);
+      recognition.onend = () => setIsListening(false);
 
       recognitionRef.current = recognition;
       recognition.start();
@@ -137,146 +127,114 @@ export default function Home() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between bg-[#07090e] px-4 py-8 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white">
-      {/* Minimal Header */}
-      <header className="flex w-full max-w-xl items-center justify-between pt-2">
-        <div className="flex items-center gap-2.5">
-          <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
-          <span className="text-sm font-semibold tracking-tight text-white">Sarvam Voice</span>
-        </div>
-
-        {/* Language & Sound Toggles */}
+    <div className="flex min-h-screen flex-col bg-gray-100 text-gray-900 font-sans">
+      {/* Top Bar */}
+      <header className="flex w-full items-center justify-between border-b border-gray-200 bg-white px-6 py-4 shadow-sm">
         <div className="flex items-center gap-2">
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="rounded-lg border border-slate-800 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-300 outline-none hover:border-slate-700 transition"
-          >
-            <option value="hi-IN">Hindi (hi-IN)</option>
-            <option value="en-IN">English (India)</option>
-            <option value="ta-IN">Tamil (ta-IN)</option>
-            <option value="te-IN">Telugu (te-IN)</option>
-            <option value="bn-IN">Bengali (bn-IN)</option>
-          </select>
-
-          <button
-            onClick={() => {
-              setVoiceEnabled(!voiceEnabled);
-              if (voiceEnabled) window.speechSynthesis?.cancel();
-            }}
-            title={voiceEnabled ? "Mute Voice Output" : "Enable Voice Output"}
-            className={`rounded-lg border px-2.5 py-1 text-xs transition ${
-              voiceEnabled
-                ? "border-indigo-500/40 bg-indigo-950/30 text-indigo-300"
-                : "border-slate-800 bg-slate-900 text-slate-400"
-            }`}
-          >
-            {voiceEnabled ? "🔊 Sound On" : "🔇 Muted"}
-          </button>
+          <div className="h-3 w-3 rounded-full bg-emerald-500 shadow-sm" />
+          <h1 className="text-base font-semibold text-gray-800">Sarvam Voice</h1>
         </div>
+
+        <button
+          onClick={() => {
+            setSoundEnabled(!soundEnabled);
+            if (soundEnabled) window.speechSynthesis?.cancel();
+          }}
+          className="rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 transition"
+        >
+          {soundEnabled ? "🔊 Sound On" : "🔇 Sound Off"}
+        </button>
       </header>
 
-      {/* Center Voice Orb & Status */}
-      <main className="flex w-full max-w-xl flex-1 flex-col items-center justify-center my-8 space-y-8">
-        {/* Animated Voice Orb */}
-        <div className="relative flex items-center justify-center">
-          {/* Outer Pulsing Rings */}
-          {(isListening || isThinking || isSpeaking) && (
+      {/* Main Single-Page Chat View */}
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-4 py-6">
+        {/* Chat Messages Container */}
+        <div className="flex-1 space-y-3 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-sm min-h-[380px] max-h-[520px]">
+          {messages.map((m) => (
             <div
-              className={`absolute h-48 w-48 rounded-full animate-ping opacity-25 ${
-                isListening
-                  ? "bg-rose-500"
-                  : isThinking
-                  ? "bg-amber-400"
-                  : "bg-indigo-500"
-              }`}
-            />
+              key={m.id}
+              className={`flex flex-col ${m.sender === "user" ? "items-end" : "items-start"}`}
+            >
+              <span className="text-[11px] font-medium text-gray-400 mb-1 px-1">
+                {m.sender === "user" ? "You" : "Sarvam"}
+              </span>
+              <div
+                className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  m.sender === "user"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "bg-gray-100 text-gray-800 border border-gray-200"
+                }`}
+              >
+                {m.text}
+              </div>
+            </div>
+          ))}
+
+          {isThinking && (
+            <div className="flex flex-col items-start">
+              <span className="text-[11px] font-medium text-gray-400 mb-1 px-1">Sarvam</span>
+              <div className="rounded-2xl bg-gray-100 border border-gray-200 px-4 py-2.5 text-xs text-gray-500 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-blue-500 animate-bounce" />
+                <span className="h-2 w-2 rounded-full bg-blue-500 animate-bounce [animation-delay:0.2s]" />
+                <span className="h-2 w-2 rounded-full bg-blue-500 animate-bounce [animation-delay:0.4s]" />
+                <span>Thinking...</span>
+              </div>
+            </div>
           )}
+          <div ref={messagesEndRef} />
+        </div>
 
-          {/* Central Mic Button */}
+        {/* Big Bright Voice Mic Button in Center */}
+        <div className="my-6 flex flex-col items-center justify-center">
           <button
-            onClick={toggleListening}
-            className={`relative flex h-32 w-32 items-center justify-center rounded-full transition-all duration-300 shadow-2xl focus:outline-none ${
+            onClick={toggleMic}
+            className={`flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg transition-all duration-300 ${
               isListening
-                ? "bg-rose-600 shadow-rose-600/40 scale-105"
+                ? "bg-red-500 ring-4 ring-red-300 scale-110 shadow-red-500/40 animate-pulse"
                 : isThinking
-                ? "bg-amber-500 shadow-amber-500/30 scale-95 animate-pulse"
-                : isSpeaking
-                ? "bg-indigo-600 shadow-indigo-600/40 scale-105"
-                : "bg-slate-900 border-2 border-slate-700/80 hover:border-indigo-500/80 hover:scale-105"
+                ? "bg-amber-500 ring-4 ring-amber-200 scale-95"
+                : "bg-blue-600 hover:bg-blue-700 hover:scale-105 shadow-blue-500/30"
             }`}
+            title="Click to speak"
           >
-            <span className="text-4xl select-none">
-              {isListening ? "🎙️" : isThinking ? "⏳" : isSpeaking ? "🔊" : "🎙️"}
-            </span>
+            <svg
+              className="h-10 w-10 fill-current"
+              viewBox="0 0 24 24"
+            >
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+            </svg>
           </button>
+          <span className="mt-2 text-xs font-medium text-gray-500">
+            {isListening ? "Listening... Speak now" : isThinking ? "Processing..." : "Tap to Speak"}
+          </span>
         </div>
 
-        {/* State Label */}
-        <div className="text-center">
-          <p className="text-sm font-medium text-slate-300">
-            {isListening
-              ? "Listening... Speak now"
-              : isThinking
-              ? "Sarvam AI is thinking..."
-              : isSpeaking
-              ? "Speaking..."
-              : "Tap microphone to speak"}
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            Powered by Sarvam-105B Indic Language Model
-          </p>
-        </div>
-
-        {/* Clean Transcript / Conversation Card */}
-        {(transcript || response) && (
-          <div className="w-full rounded-2xl border border-slate-800/80 bg-slate-900/40 p-5 space-y-4 backdrop-blur-sm animate-fade-in">
-            {transcript && (
-              <div>
-                <span className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
-                  You said
-                </span>
-                <p className="text-sm text-slate-200 mt-0.5">{transcript}</p>
-              </div>
-            )}
-
-            {response && (
-              <div className="border-t border-slate-800/60 pt-3">
-                <span className="text-[10px] uppercase font-semibold text-indigo-400 tracking-wider">
-                  Sarvam
-                </span>
-                <p className="text-sm text-slate-100 mt-0.5 leading-relaxed">{response}</p>
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-
-      {/* Minimal Bottom Text Fallback */}
-      <footer className="w-full max-w-xl pb-2">
+        {/* Text Input Box */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            handleSendQuery(textInput);
+            sendMessage(input);
           }}
-          className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/60 p-1.5 focus-within:border-slate-700 transition"
+          className="flex items-center gap-2 rounded-full border border-gray-300 bg-white p-1.5 shadow-sm focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition"
         >
           <input
             type="text"
-            value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
-            placeholder="Or type a question in English, Hindi, or Hinglish..."
-            className="flex-1 bg-transparent px-3 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type your message here..."
+            disabled={isThinking}
+            className="flex-1 bg-transparent px-4 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none"
           />
           <button
             type="submit"
-            disabled={!textInput.trim() || isThinking}
-            className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-40"
+            disabled={!input.trim() || isThinking}
+            className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-40 transition"
           >
             Send
           </button>
         </form>
-      </footer>
+      </main>
     </div>
   );
 }
