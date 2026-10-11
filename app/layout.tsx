@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Sarvam AI Studio | Indic Intelligence",
-  description: "Next-generation multilingual AI workspace powered by Sarvam AI",
+  title: "Sarvam Voice | Multilingual Voice AI",
+  description: "Minimalist voice-enabled interface powered by Sarvam AI 105B",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
